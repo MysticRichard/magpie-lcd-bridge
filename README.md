@@ -14,6 +14,16 @@
 
 默认显示 Codex 和 OpenCode Go。额度供应商、标题、窗口名称和短标签都可以通过本机 `config.json` 调整。
 
+## 实机示例
+
+<img src="docs/images/device-dashboard-prototype.jpg" alt="DA14585 BLE 液晶屏显示 Magpie 用量与额度" width="720">
+
+开发阶段的实机运行照片。照片已裁除设备右侧的条码/标识区域；界面中的字号、圆环尺寸和间距属于当时版本，最终效果以当前代码渲染结果为准。
+
+<img src="docs/images/device-clock-mode.jpg" alt="DA14585 液晶屏在 BLE 断开后显示时钟模式" width="360">
+
+BLE 断开或程序停止后，设备会回到固件自带的时钟模式。使用 `push` 后看到该画面是预期行为；持续显示应使用 `run` 或登录自启任务。
+
 ## 这个项目适合谁
 
 适合以下使用方式：
@@ -254,6 +264,7 @@ uv run python -m unittest -v
 - [设备说明](docs/device.md)
 - [BLE 图片协议](docs/protocol.md)
 - [运行与维护](docs/operations.md)
+- [实机图片说明](docs/images/README.md)
 
 ## 致谢
 
