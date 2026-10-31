@@ -1,0 +1,37 @@
+{
+  "quota_groups": [
+    {
+      "provider": "codex",
+      "title": "Codex",
+      "windows": [
+        {
+          "name": "5 hours",
+          "label": "5H"
+        },
+        {
+          "name": "7 days",
+          "label": "7D"
+        }
+      ]
+    },
+    {
+      "provider": "opencode-go",
+      "title": "OpenCode Go",
+      "windows": [
+        {
+          "name": "5 hours",
+          "label": "5H"
+        },
+        {
+          "name": "7 days",
+          "label": "7D"
+        },
+        {
+          "name": "Month",
+          "label": "本月"
+        }
+      ]
+    }
+  ]
+}
+

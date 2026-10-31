@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+last-frame.png
+quota-large-preview*.png
+config-preview.png
+*.log
+config.json
+
