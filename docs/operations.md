@@ -18,7 +18,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-autostart.ps1
 ```
 
-计划任务名称是 `Magpie LCD Bridge`，触发条件是当前 Windows 用户登录。它使用项目自己的 `.venv`，不会依赖当前 PowerShell 会话。
+计划任务名称是 `Magpie LCD Bridge`，触发条件是当前 Windows 用户登录。它使用项目自己的 `.venv\Scripts\pythonw.exe`，不会依赖当前 PowerShell 会话，也不会打开控制台窗口；运行日志写入 `logs\magpie-lcd.log`。
 
 ## 手动切换
 

@@ -56,7 +56,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-autostart.ps1
 ```
 
-它会创建当前 Windows 用户的隐藏计划任务 `Magpie LCD Bridge`，在用户登录后自动启动。不会修改系统服务，也不会请求管理员权限。
+它会创建当前 Windows 用户的隐藏计划任务 `Magpie LCD Bridge`，在用户登录后使用无窗口的 `pythonw.exe` 自动启动。不会修改系统服务，也不会请求管理员权限。运行日志仍写入 `logs\magpie-lcd.log`，不会弹出控制台窗口。
 
 日常开关：
 

@@ -15,7 +15,7 @@ if ($task) {
 }
 
 $processes = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and
+    $_.Name -in @("python.exe", "pythonw.exe") -and
     $_.CommandLine -like "*magpie-lcd-bridge*magpie_lcd.py*run*"
 }
 if ($processes) {

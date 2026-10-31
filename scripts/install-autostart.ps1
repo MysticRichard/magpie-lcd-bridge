@@ -1,13 +1,13 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$python = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$python = Join-Path $projectRoot ".venv\Scripts\pythonw.exe"
 $script = Join-Path $projectRoot "magpie_lcd.py"
 $taskName = "Magpie LCD Bridge"
 $userId = "$env:USERDOMAIN\$env:USERNAME"
 
 if (-not (Test-Path -LiteralPath $python)) {
-    throw "Python environment not found: $python. Run 'uv sync' first."
+    throw "Windowless Python runtime not found: $python. Run 'uv sync' first."
 }
 if (-not (Test-Path -LiteralPath $script)) {
     throw "Bridge script not found: $script"
