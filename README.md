@@ -70,6 +70,47 @@ BLE 断开或程序停止后，设备会回到固件自带的时钟模式。使�
 
 项目只在当前 Windows BLE 环境做过实机验证。macOS、Linux、WSL 和 Android 不在当前支持范围内。
 
+## 快速开始
+
+### 1. 安装依赖
+
+```powershell
+cd path\to\magpie-lcd-bridge
+uv sync
+```
+
+### 2. 启动 Magpie，关闭 DA LCD Studio
+
+确认 Magpie 的本地接口可用，并确保屏幕没有被原厂控制器占用。
+
+### 3. 先预览
+
+```powershell
+uv run python magpie_lcd.py render
+```
+
+检查生成的 `last-frame.png`。预览正确后再连接实体屏。
+
+### 4. 测试一次实体屏
+
+```powershell
+uv run python magpie_lcd.py scan
+uv run python magpie_lcd.py push
+```
+
+`push` 只发送一帧，完成后会断开并可能回到时钟模式。
+
+### 5. 安装后台常驻
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-autostart.ps1
+.\scripts\start-magpie-lcd.ps1
+.\scripts\status-magpie-lcd.ps1
+```
+
+更完整的步骤、故障排查和卸载方法见 [完整使用教程](docs/usage.md)。
+
 ## 使用方案
 
 ### 方案一：只预览，不连接屏幕
@@ -194,6 +235,8 @@ Copy-Item config.example.json config.json
 
 如果某个供应商或窗口暂时没有数据，屏幕上会显示短横线，不会伪造额度。
 
+完整的供应商查询、字段说明、示例配置、环境变量和故障排查见 [配置教程](docs/configuration.md)。
+
 ## 数据、隐私与边界
 
 - 只读用户配置的 Magpie 本地接口，默认是 `http://127.0.0.1:3425`。
@@ -260,6 +303,7 @@ uv run python -m unittest -v
 ## 文档
 
 - [完整使用说明](docs/usage.md)
+- [配置教程](docs/configuration.md)
 - [适用场景、条件和限制](docs/compatibility.md)
 - [设备说明](docs/device.md)
 - [BLE 图片协议](docs/protocol.md)
