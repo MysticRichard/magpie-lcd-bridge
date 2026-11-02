@@ -179,10 +179,18 @@ class ProtocolTests(unittest.TestCase):
 
 
 class HangingClient:
-    is_connected = True
+    def __init__(self):
+        self.is_connected = True
 
     async def write_gatt_char(self, *_args, **_kwargs):
         await asyncio.Future()
+
+    async def disconnect(self):
+        self.is_connected = False
+
+
+class DisconnectableHangingClient(HangingClient):
+    pass
 
 
 class BleTests(unittest.IsolatedAsyncioTestCase):
@@ -196,6 +204,23 @@ class BleTests(unittest.IsolatedAsyncioTestCase):
             with patch("magpie_lcd.iter_image_writes", return_value=((b"packet", True),)):
                 with self.assertRaises(asyncio.TimeoutError):
                     await ble.send_image(Image.new("RGB", (1, 1)))
+        await ble.close()
+
+    async def test_gatt_timeout_keeps_write_until_connection_cleanup(self) -> None:
+        from PIL import Image
+
+        ble = LcdBle(write_timeout=0.01)
+        ble.client = DisconnectableHangingClient()
+        ble.data_char = object()
+        with patch("magpie_lcd.image_payload", return_value=(FORMAT_RGB565_RAW, b"payload")):
+            with patch("magpie_lcd.iter_image_writes", return_value=((b"packet", True),)):
+                with self.assertRaises(asyncio.TimeoutError):
+                    await ble.send_image(Image.new("RGB", (1, 1)))
+
+        self.assertIsNotNone(ble._pending_write)
+        self.assertFalse(ble._pending_write.cancelled())
+        await ble.close()
+        self.assertIsNone(ble._pending_write)
 
 
 if __name__ == "__main__":

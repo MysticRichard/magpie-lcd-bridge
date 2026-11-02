@@ -476,6 +476,7 @@ class LcdBle:
         self.write_timeout = write_timeout
         self.client = None
         self.data_char = None
+        self._pending_write: asyncio.Task | None = None
 
     @property
     def connected(self) -> bool:
@@ -527,11 +528,44 @@ class LcdBle:
         format_id, payload = image_payload(image)
         count = 0
         started = time.monotonic()
-        for packet, response in iter_image_writes(payload, format_id):
-            await asyncio.wait_for(
-                self.client.write_gatt_char(self.data_char, packet, response=response),
-                timeout=self.write_timeout,
+        total = math.ceil(len(payload) / CHUNK_SIZE) + 2
+        for index, (packet, response) in enumerate(iter_image_writes(payload, format_id), 1):
+            operation = asyncio.create_task(
+                self.client.write_gatt_char(self.data_char, packet, response=response)
             )
+            self._pending_write = operation
+            try:
+                await asyncio.wait_for(asyncio.shield(operation), timeout=self.write_timeout)
+            except asyncio.TimeoutError:
+                phase = {IMAGE_BEGIN: "起始包", IMAGE_DATA: "数据包", IMAGE_END: "结束包"}.get(
+                    packet[0], f"命令 {packet[0]}"
+                )
+                log.error(
+                    "BLE 写入超时：%s %d/%d，响应=%s，超时 %.1f 秒",
+                    phase,
+                    index,
+                    total,
+                    response,
+                    self.write_timeout,
+                )
+                raise
+            except Exception as error:
+                phase = {IMAGE_BEGIN: "起始包", IMAGE_DATA: "数据包", IMAGE_END: "结束包"}.get(
+                    packet[0], f"命令 {packet[0]}"
+                )
+                log.error(
+                    "BLE 写入失败：%s %d/%d，响应=%s，异常 %s: %r",
+                    phase,
+                    index,
+                    total,
+                    response,
+                    type(error).__name__,
+                    error,
+                )
+                raise
+            finally:
+                if operation.done():
+                    self._pending_write = None
             count += 1
         elapsed = time.monotonic() - started
         log.info(
@@ -545,13 +579,31 @@ class LcdBle:
 
     async def close(self) -> None:
         client = self.client
+        pending = self._pending_write
         self.client = None
         self.data_char = None
         if client and client.is_connected:
             try:
-                await asyncio.wait_for(client.disconnect(), timeout=5)
+                disconnect_task = asyncio.create_task(client.disconnect())
+                await asyncio.wait_for(asyncio.shield(disconnect_task), timeout=5)
             except Exception as error:
-                log.warning("释放 BLE 连接失败：%s", error)
+                log.warning("释放 BLE 连接失败：%s: %r", type(error).__name__, error)
+                if "disconnect_task" in locals() and not disconnect_task.done():
+                    disconnect_task.cancel()
+                    try:
+                        await disconnect_task
+                    except asyncio.CancelledError:
+                        pass
+        if pending and not pending.done():
+            pending.cancel()
+        if pending:
+            try:
+                await pending
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._pending_write = None
 
 
 def save_preview(image: Image.Image, output: Path) -> None:
@@ -657,7 +709,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 await ble.send_image(image)
                 failed = False
             except Exception as error:
-                log.error("BLE 更新失败：%s", error)
+                log.error("BLE 更新失败：%s: %r", type(error).__name__, error)
                 await ble.close()
                 failed = True
             await asyncio.sleep(refresh_delay(args.interval, failed))
