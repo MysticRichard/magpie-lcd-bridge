@@ -4,9 +4,11 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from magpie_lcd import (
+    DATA_UUID,
     FORMAT_RGB565_DELTA_PACKBITS,
     FORMAT_RGB565_PACKBITS,
     FORMAT_RGB565_RAW,
@@ -26,6 +28,7 @@ from magpie_lcd import (
     load_quota_config,
     load_snapshot,
     pack_bits,
+    read_snapshot,
     ring_positions,
     render_dashboard,
     refresh_delay,
@@ -193,7 +196,164 @@ class DisconnectableHangingClient(HangingClient):
     pass
 
 
+class OrderedCleanupClient:
+    def __init__(self) -> None:
+        self.is_connected = True
+        self.write_cancelled = asyncio.Event()
+        self.disconnect_after_write_cancel = False
+
+    async def write_gatt_char(self, *_args, **_kwargs) -> None:
+        try:
+            await asyncio.Future()
+        finally:
+            self.write_cancelled.set()
+
+    async def disconnect(self) -> None:
+        self.disconnect_after_write_cancel = self.write_cancelled.is_set()
+        self.is_connected = False
+
+
+class SlowDisconnectClient:
+    def __init__(self) -> None:
+        self.is_connected = True
+
+    async def disconnect(self) -> None:
+        await asyncio.sleep(10)
+
+
+class FakeDevice:
+    def __init__(self, name: str, address: str) -> None:
+        self.name = name
+        self.address = address
+
+
+class FakeCharacteristic:
+    uuid = DATA_UUID
+
+
+class FakeService:
+    characteristics = (FakeCharacteristic(),)
+
+
+class FakeBleakClient:
+    instances = []
+
+    def __init__(self, address_or_device, disconnected_callback, **_kwargs) -> None:
+        self.address_or_device = address_or_device
+        self.disconnected_callback = disconnected_callback
+        self.is_connected = False
+        self.services = (FakeService(),)
+        self.instances.append(self)
+
+    async def connect(self) -> None:
+        self.is_connected = True
+
+    async def get_services(self) -> None:
+        return None
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+
 class BleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connect_uses_scanned_device_object(self) -> None:
+        device = FakeDevice("DA-LCD-772D", "AA:BB:CC:DD:EE:FF")
+        FakeBleakClient.instances.clear()
+        ble = LcdBle()
+        with (
+            patch("magpie_lcd.scan_devices", new=AsyncMock(return_value=[("DA-LCD-772D", device)])),
+            patch("bleak.BleakClient", FakeBleakClient),
+        ):
+            await ble.connect()
+            self.assertIs(FakeBleakClient.instances[0].address_or_device, device)
+            self.assertEqual(ble.address, device.address)
+            await ble.close()
+
+    async def test_connect_filters_scan_results_by_address(self) -> None:
+        first = FakeDevice("DA-LCD-FIRST", "00:00:00:00:00:01")
+        second = FakeDevice("DA-LCD-SECOND", "00:00:00:00:00:02")
+        FakeBleakClient.instances.clear()
+        ble = LcdBle(address=second.address.lower())
+        with (
+            patch(
+                "magpie_lcd.scan_devices",
+                new=AsyncMock(return_value=[("DA-LCD-FIRST", first), ("DA-LCD-SECOND", second)]),
+            ),
+            patch("bleak.BleakClient", FakeBleakClient),
+        ):
+            await ble.connect()
+            self.assertIs(FakeBleakClient.instances[0].address_or_device, second)
+            await ble.close()
+
+    async def test_stale_disconnect_callback_does_not_clear_new_connection(self) -> None:
+        ble = LcdBle()
+        current_client = object()
+        ble.client = current_client
+        ble.data_char = object()
+        ble._generation = 2
+
+        ble._on_disconnect(1, object())
+        self.assertIsNotNone(ble.data_char)
+
+        ble._on_disconnect(2, current_client)
+        self.assertIsNone(ble.data_char)
+
+    async def test_close_cancels_pending_write_before_disconnect(self) -> None:
+        ble = LcdBle()
+        client = OrderedCleanupClient()
+        ble.client = client
+        ble.data_char = object()
+        ble._pending_write = asyncio.create_task(client.write_gatt_char())
+        await asyncio.sleep(0)
+
+        await ble.close()
+
+        self.assertTrue(client.disconnect_after_write_cancel)
+
+    async def test_close_bounds_hanging_disconnect(self) -> None:
+        ble = LcdBle()
+        ble.client = SlowDisconnectClient()
+        ble.data_char = object()
+
+        with patch("magpie_lcd.BLE_DISCONNECT_TIMEOUT", 0.01):
+            started = asyncio.get_running_loop().time()
+            await ble.close()
+            elapsed = asyncio.get_running_loop().time() - started
+
+        self.assertLess(elapsed, 0.5)
+        self.assertTrue(ble._cleanup_tasks)
+        for task in tuple(ble._cleanup_tasks):
+            task.cancel()
+        await asyncio.gather(*ble._cleanup_tasks, return_exceptions=True)
+
+    async def test_connect_waits_for_incomplete_cleanup(self) -> None:
+        ble = LcdBle()
+        cleanup = asyncio.create_task(asyncio.Event().wait())
+        ble._track_cleanup(cleanup)
+
+        with (
+            patch("magpie_lcd.BLE_CLEANUP_WAIT_TIMEOUT", 0.01),
+            patch("magpie_lcd.scan_devices", new=AsyncMock()) as scan,
+            self.assertRaisesRegex(RuntimeError, "上一轮 BLE 连接清理尚未完成"),
+        ):
+            await ble.connect()
+
+        scan.assert_not_awaited()
+        cleanup.cancel()
+        await asyncio.gather(cleanup, return_exceptions=True)
+
+    async def test_snapshot_read_is_offloaded_from_event_loop(self) -> None:
+        args = SimpleNamespace(base_url="http://example.test", rate=6.5, config=Path("missing.json"))
+        expected = object()
+        with (
+            patch("magpie_lcd.load_quota_config", return_value=()),
+            patch("magpie_lcd.asyncio.to_thread", new=AsyncMock(return_value=expected)) as offload,
+        ):
+            result = await read_snapshot(args)
+
+        self.assertIs(result, expected)
+        offload.assert_awaited_once_with(load_snapshot, args.base_url, args.rate, ())
+
     async def test_gatt_write_timeout_prevents_run_from_hanging(self) -> None:
         from PIL import Image
 

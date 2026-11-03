@@ -149,7 +149,7 @@ uv run python magpie_lcd.py push
 uv run python magpie_lcd.py run --interval 60
 ```
 
-程序会保持 BLE 连接，每 60 秒读取一次 Magpie、渲染一帧并发送。单次 BLE 写入超过 10 秒会中止；断线后约 10 秒进入下一次连接尝试。
+程序会保持 BLE 连接，每 60 秒读取一次 Magpie、渲染一帧并发送。重连时只显式扫描一次，并把扫描得到的设备对象交给 Bleak，避免底层再次隐式扫描。Magpie 的 HTTP 读取在后台线程执行，不会阻塞 BLE 事件循环。单次 BLE 写入超过 10 秒会中止；断线后约 10 秒进入下一次连接尝试。
 
 ### 方案四：Windows 登录后静默自启
 
@@ -304,7 +304,7 @@ Test-NetConnection 127.0.0.1 -Port 3425
 uv run python -m unittest -v
 ```
 
-当前测试覆盖协议编码、额度映射、画面生成、成本三位数排版、BLE 写入超时和失败重连间隔。
+当前测试覆盖协议编码、额度映射、画面生成、成本三位数排版、BLE 写入超时、扫描设备复用、旧连接回调隔离、限时连接清理、后台数据读取和失败重连间隔。
 
 ## 文档
 

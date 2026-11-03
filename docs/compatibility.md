@@ -38,6 +38,7 @@
 - 可用的 BLE/WinRT 蓝牙栈。
 - Python 3.11–3.14，推荐使用项目固定的 Python 3.12。
 - `bleak` 和 `pillow` 依赖，执行 `uv sync` 安装。
+- 当前锁定的 Bleak 版本为 3.0.2。
 - Windows 中文字体 `msyh.ttc`、`msyhbd.ttc` 和 `segoeuib.ttf`。
 - Magpie 正在运行。
 - Magpie 本地接口默认位于 `http://127.0.0.1:3425`。
@@ -132,6 +133,10 @@
 ### DA LCD Studio 占用
 
 DA LCD Studio 和本桥接程序不能同时连接设备。需要原厂资源监控时，先停止桥接，再打开原厂软件。
+
+### 其他 BLE 程序同时运行
+
+本项目不会自动关闭或锁定 EPD、DA LCD Studio 等其他 BLE 程序。多个程序同时扫描或连接设备时，Windows 蓝牙适配器仍可能出现请求排队或连接冲突。长时间稳定性测试应分别记录桥接程序和其他 BLE 程序的运行状态。
 
 ### Windows 睡眠
 

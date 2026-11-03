@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -32,6 +32,9 @@ FORMAT_RGB565_DELTA_PACKBITS = 6
 CHUNK_SIZE = 156
 TRANSFER_WINDOW = 12
 BLE_WRITE_TIMEOUT = 10.0
+BLE_WRITE_CANCEL_TIMEOUT = 2.0
+BLE_DISCONNECT_TIMEOUT = 5.0
+BLE_CLEANUP_WAIT_TIMEOUT = 5.0
 
 DEFAULT_BASE_URL = "http://127.0.0.1:3425"
 DEFAULT_CNY_PER_USD = 6.68
@@ -454,11 +457,11 @@ def iter_image_writes(
         yield packet, response
 
 
-async def scan_devices(timeout: float = 5.0) -> list[tuple[str, str]]:
+async def scan_devices(timeout: float = 5.0) -> list[tuple[str, Any]]:
     from bleak import BleakScanner
 
     result = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    matches: list[tuple[str, str]] = []
+    matches: list[tuple[str, Any]] = []
     if isinstance(result, dict):
         entries = result.values()
     else:
@@ -466,8 +469,8 @@ async def scan_devices(timeout: float = 5.0) -> list[tuple[str, str]]:
     for device, advertisement in entries:
         name = getattr(device, "name", None) or getattr(advertisement, "local_name", None) or ""
         if name.startswith("DA-LCD-"):
-            matches.append((name, device.address))
-    return sorted(matches)
+            matches.append((name, device))
+    return sorted(matches, key=lambda item: (item[0], item[1].address))
 
 
 class LcdBle:
@@ -477,31 +480,70 @@ class LcdBle:
         self.client = None
         self.data_char = None
         self._pending_write: asyncio.Task | None = None
+        self._cleanup_tasks: set[asyncio.Task] = set()
+        self._generation = 0
 
     @property
     def connected(self) -> bool:
         return bool(self.client and self.client.is_connected and self.data_char)
 
-    def _on_disconnect(self, _client) -> None:
+    def _on_disconnect(self, generation: int, client) -> None:
+        if generation != self._generation or client is not self.client:
+            log.debug("忽略旧 BLE 连接的断线回调")
+            return
         self.data_char = None
         log.warning("BLE 连接已断开")
+
+    def _track_cleanup(self, task: asyncio.Task) -> None:
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._cleanup_done)
+
+    def _cleanup_done(self, task: asyncio.Task) -> None:
+        self._cleanup_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _wait_for_cleanup(self) -> None:
+        if not self._cleanup_tasks:
+            return
+        _, pending = await asyncio.wait(
+            self._cleanup_tasks, timeout=BLE_CLEANUP_WAIT_TIMEOUT
+        )
+        if pending:
+            raise RuntimeError("上一轮 BLE 连接清理尚未完成")
 
     async def connect(self) -> None:
         from bleak import BleakClient
 
-        address = self.address
-        if not address:
-            devices = await scan_devices()
-            if not devices:
-                raise RuntimeError("未发现 DA-LCD-XXXX 设备；确认屏幕已上电且未被 DA LCD Studio 占用")
-            if len(devices) > 1:
-                names = ", ".join(f"{name} ({address})" for name, address in devices)
-                raise RuntimeError(f"发现多台 DA-LCD，请用 --address 指定：{names}")
-            address = devices[0][1]
+        if self.client is not None:
+            await self.close()
+        await self._wait_for_cleanup()
+
+        devices = await scan_devices()
+        if not devices:
+            raise RuntimeError("未发现 DA-LCD-XXXX 设备；确认屏幕已上电且未被 DA LCD Studio 占用")
+        if self.address:
+            matches = [
+                (name, device)
+                for name, device in devices
+                if device.address.casefold() == self.address.casefold()
+            ]
+            if not matches:
+                raise RuntimeError(f"未发现指定 DA-LCD 设备 {self.address}")
+        else:
+            matches = devices
+        if len(matches) > 1:
+            names = ", ".join(f"{name} ({device.address})" for name, device in matches)
+            raise RuntimeError(f"发现多台 DA-LCD，请用 --address 指定：{names}")
+
+        name, device = matches[0]
+        self.address = device.address
+        self._generation += 1
+        generation = self._generation
 
         self.client = BleakClient(
-            address,
-            disconnected_callback=self._on_disconnect,
+            device,
+            disconnected_callback=lambda client: self._on_disconnect(generation, client),
             timeout=20,
             winrt={"use_cached_services": False},
         )
@@ -520,7 +562,7 @@ class LcdBle:
         if not self.data_char:
             await self.close()
             raise RuntimeError("已连接，但没有发现 FF01 图片特征")
-        log.info("已连接 %s，图片特征 FF01 可用", address)
+        log.info("已连接 %s (%s)，图片特征 FF01 可用", name, device.address)
 
     async def send_image(self, image: Image.Image) -> tuple[int, int]:
         if not self.connected:
@@ -578,32 +620,39 @@ class LcdBle:
         return format_id, len(payload)
 
     async def close(self) -> None:
+        self._generation += 1
         client = self.client
         pending = self._pending_write
         self.client = None
         self.data_char = None
-        if client and client.is_connected:
-            try:
-                disconnect_task = asyncio.create_task(client.disconnect())
-                await asyncio.wait_for(asyncio.shield(disconnect_task), timeout=5)
-            except Exception as error:
-                log.warning("释放 BLE 连接失败：%s: %r", type(error).__name__, error)
-                if "disconnect_task" in locals() and not disconnect_task.done():
-                    disconnect_task.cancel()
-                    try:
-                        await disconnect_task
-                    except asyncio.CancelledError:
-                        pass
+        self._pending_write = None
+
         if pending and not pending.done():
             pending.cancel()
-        if pending:
-            try:
-                await pending
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-        self._pending_write = None
+            _, unfinished = await asyncio.wait(
+                {pending}, timeout=BLE_WRITE_CANCEL_TIMEOUT
+            )
+            if unfinished:
+                log.warning("BLE 写入取消未完成，转入后台清理")
+                self._track_cleanup(pending)
+
+        if client and client.is_connected:
+            disconnect_task = asyncio.create_task(client.disconnect())
+            done, _ = await asyncio.wait(
+                {disconnect_task}, timeout=BLE_DISCONNECT_TIMEOUT
+            )
+            if disconnect_task in done:
+                try:
+                    disconnect_task.result()
+                except (asyncio.CancelledError, Exception) as error:
+                    log.warning("释放 BLE 连接失败：%s: %r", type(error).__name__, error)
+            else:
+                log.warning(
+                    "释放 BLE 连接超时 %.1f 秒，转入后台清理",
+                    BLE_DISCONNECT_TIMEOUT,
+                )
+                disconnect_task.cancel()
+                self._track_cleanup(disconnect_task)
 
 
 def save_preview(image: Image.Image, output: Path) -> None:
@@ -659,14 +708,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def read_snapshot(args: argparse.Namespace) -> Snapshot:
+    groups = load_quota_config(args.config)
+    return await asyncio.to_thread(load_snapshot, args.base_url, args.rate, groups)
+
+
 async def async_main(args: argparse.Namespace) -> int:
     if args.command == "scan":
         devices = await scan_devices()
         if not devices:
             print("未发现 DA-LCD 设备")
             return 1
-        for name, address in devices:
-            print(f"{name}\t{address}")
+        for name, device in devices:
+            print(f"{name}\t{device.address}")
         return 0
 
     if args.command == "render":
@@ -681,7 +735,7 @@ async def async_main(args: argparse.Namespace) -> int:
     try:
         if args.command == "push":
             try:
-                last = load_snapshot(args.base_url, args.rate, load_quota_config(args.config))
+                last = await read_snapshot(args)
                 state = "normal"
             except Exception as error:
                 log.error("读取 Magpie 失败：%s", error)
@@ -695,7 +749,7 @@ async def async_main(args: argparse.Namespace) -> int:
         while True:
             now = datetime.now().astimezone()
             try:
-                last = load_snapshot(args.base_url, args.rate, load_quota_config(args.config))
+                last = await read_snapshot(args)
                 state = "normal"
             except Exception as error:
                 log.error("读取 Magpie 失败：%s", error)
