@@ -16,6 +16,18 @@
 
 ## 开机自启
 
+推荐使用托盘控制器的当前用户启动项：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-controller.ps1
+.\scripts\install-controller-autostart.ps1
+```
+
+启用前必须先移除旧的 `Magpie LCD Bridge` 计划任务，否则登录时会同时启动两个 worker。托盘控制器的设置写入 `%LOCALAPPDATA%\MagpieLcdBridge\settings.json`，不会进入 Git。
+
+旧版计划任务仍作为兼容/回退入口：
+
 安装一次：
 
 ```powershell

@@ -9,9 +9,10 @@
 | 预览 | `render` | 不连接设备，检查数据和排版 | 不占用 BLE |
 | 一次性推送 | `push` | 临时发送一帧 | 发送后退出并断开 |
 | 持续刷新 | `run` | 前台调试或手动常驻 | 保持连接，周期刷新 |
-| 登录自启 | `install-autostart.ps1` | 日常桌面显示 | 隐藏运行，保持连接 |
+| 托盘控制器 | `start-controller.ps1` | 日常启停、设置和查看状态 | 管理一个隐藏 worker |
+| 旧版登录自启 | `install-autostart.ps1` | 兼容或托盘回退 | 隐藏运行，保持连接 |
 
-日常使用推荐“登录自启”；调试画面用 `render`；临时更新用 `push`。如果希望屏幕持续显示，不要用 `push` 后手动关闭窗口。
+日常使用推荐托盘控制器；调试画面用 `render`；临时更新用 `push`。如果希望屏幕持续显示，不要用 `push` 后手动关闭窗口。
 
 ## 2. 准备环境
 
@@ -131,7 +132,27 @@ uv run python magpie_lcd.py run --interval 60
 
 这个命令会在当前 PowerShell 窗口输出日志。需要后台静默运行时，使用下一节的自启方案。
 
-## 7. 安装 Windows 登录自启
+## 7. 使用托盘控制器
+
+启动：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-controller.ps1
+```
+
+托盘菜单提供：
+
+- 启动/停止显示。
+- 立即刷新。
+- 设置刷新间隔和登录自启。
+- 打开最新预览。
+- 打开 `config.json` 编辑额度。
+- 退出控制器。
+
+完整说明见 [Windows 托盘控制器](controller.md)。从旧计划任务迁移时，先执行 `uninstall-autostart.ps1`，确认旧任务已移除，再执行 `install-controller-autostart.ps1`，避免两个启动源同时运行。
+
+## 8. 安装旧版 Windows 登录自启
 
 首次执行：
 
@@ -151,7 +172,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 注意：这是“用户登录后启动”，不是 Windows 开机前就运行的系统服务。登录前屏幕不会由本程序更新。
 
-## 8. 日常开关
+## 9. 日常开关
 
 先进入项目目录：
 
@@ -160,7 +181,15 @@ cd path\to\magpie-lcd-bridge
 Set-ExecutionPolicy -Scope Process Bypass
 ```
 
-### 启动
+#### 托盘控制器
+
+```powershell
+.\scripts\start-controller.ps1
+.\scripts\status-controller.ps1
+.\scripts\stop-controller.ps1
+```
+
+#### 旧版计划任务启动
 
 ```powershell
 .\scripts\start-magpie-lcd.ps1
@@ -168,7 +197,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 启动隐藏计划任务。它不会打开新的 Python 控制台窗口。
 
-### 停止
+#### 旧版计划任务停止
 
 ```powershell
 .\scripts\stop-magpie-lcd.ps1
@@ -178,7 +207,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 停止后可以打开 DA LCD Studio。不要让 DA LCD Studio 和本桥接程序同时占用屏幕。
 
-### 查看状态
+#### 旧版计划任务状态
 
 ```powershell
 .\scripts\status-magpie-lcd.ps1
@@ -209,7 +238,7 @@ BLE 连接已断开
 
 停止桥接并删除计划任务，但不会删除项目、配置或日志。
 
-## 9. 配置额度卡片
+## 10. 配置额度卡片
 
 本节只给出最常用步骤；完整的字段、示例和故障排查见 [配置教程](configuration.md)。
 
@@ -251,7 +280,7 @@ Copy-Item config.example.json config.json
 
 如果配置缺失或格式错误，程序会记录警告并回退到默认配置。
 
-## 10. 汇率和参考费用
+## 11. 汇率和参考费用
 
 Magpie 的费用接口以 USD 返回，屏幕使用 CNY 近似显示。默认汇率是：
 
@@ -273,7 +302,7 @@ $env:MAGPIE_CNY_PER_USD = "7.10"
 
 汇率是显示换算值，不代表真实结算金额。
 
-## 11. 数据过期和断线
+## 12. 数据过期和断线
 
 Magpie 读取失败时：
 
@@ -287,7 +316,7 @@ BLE 断线时：
 - 设备断电或 Windows 蓝牙关闭期间，屏幕可能显示时钟模式。
 - 重新连接成功后，下一轮发送会恢复用量页面。
 
-## 12. 故障排查
+## 13. 故障排查
 
 ### `未发现 DA-LCD-XXXX 设备`
 
@@ -327,7 +356,7 @@ C:\Windows\Fonts\segoeuib.ttf
 
 缺少字体时会报错。当前没有内置字体替代方案。
 
-## 13. 卸载
+## 14. 卸载
 
 ```powershell
 .\scripts\uninstall-autostart.ps1
@@ -343,10 +372,10 @@ C:\Windows\Fonts\segoeuib.ttf
 
 确认不再使用后，再手动删除项目目录。
 
-## 14. 自检
+## 15. 自检
 
 ```powershell
 uv run python -m unittest -v
 ```
 
-自检不会连接设备，主要用于验证协议编码、额度映射、画面生成、成本排版和 BLE 超时逻辑。
+自检不会连接设备，主要用于验证协议编码、额度映射、画面生成、成本排版、BLE 超时逻辑，以及托盘设置和 worker 生命周期。

@@ -22,7 +22,7 @@
 
 <img src="docs/images/device-clock-mode.jpg" alt="DA14585 液晶屏在 BLE 断开后显示时钟模式" width="360">
 
-BLE 断开或程序停止后，设备会回到固件自带的时钟模式。使用 `push` 后看到该画面是预期行为；持续显示应使用 `run` 或登录自启任务。
+BLE 断开或程序停止后，设备会回到固件自带的时钟模式。使用 `push` 后看到该画面是预期行为；持续显示应使用托盘控制器、`run` 或旧版登录自启任务。
 
 ## 硬件来源
 
@@ -106,16 +106,14 @@ uv run python magpie_lcd.py push
 
 `push` 只发送一帧，完成后会断开并可能回到时钟模式。
 
-### 5. 安装后台常驻
+### 5. 启动托盘控制器
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\install-autostart.ps1
-.\scripts\start-magpie-lcd.ps1
-.\scripts\status-magpie-lcd.ps1
+.\scripts\start-controller.ps1
 ```
 
-更完整的步骤、故障排查和卸载方法见 [完整使用教程](docs/usage.md)。
+托盘图标提供启动/停止、立即刷新、设置、预览和额度配置入口。更完整的步骤、计划任务迁移和故障排查见 [托盘控制器说明](docs/controller.md) 与 [完整使用教程](docs/usage.md)。
 
 ## 使用方案
 
@@ -151,16 +149,27 @@ uv run python magpie_lcd.py run --interval 60
 
 程序会保持 BLE 连接，每 60 秒读取一次 Magpie、渲染一帧并发送。重连时只显式扫描一次，并把扫描得到的设备对象交给 Bleak，避免底层再次隐式扫描。Magpie 的 HTTP 读取在后台线程执行，不会阻塞 BLE 事件循环。单次 BLE 写入超过 10 秒会中止；断线后约 10 秒进入下一次连接尝试。
 
-### 方案四：Windows 登录后静默自启
+### 方案四：托盘控制器（推荐日常使用）
 
-这是日常使用的推荐方案。首次安装：
+首次启动控制器：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-controller.ps1
+```
+
+它不会打开控制台窗口，托盘菜单可完成启动/停止、立即刷新、设置和退出。刷新间隔和登录自启可在设置窗口中调整。详见 [托盘控制器说明](docs/controller.md)。
+
+### 方案五：旧版计划任务（兼容/回退）
+
+如果不需要托盘，仍可安装原有的隐藏计划任务：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-autostart.ps1
 ```
 
-它会创建当前用户的隐藏计划任务 `Magpie LCD Bridge`，在 Windows 用户登录后使用 `.venv\Scripts\pythonw.exe` 启动，不弹出控制台窗口。
+它会创建当前用户的计划任务 `Magpie LCD Bridge`，在 Windows 用户登录后使用 `.venv\Scripts\pythonw.exe` 启动。不要同时启用计划任务和控制器登录自启。
 
 ## 日常开关
 
@@ -170,6 +179,18 @@ Set-ExecutionPolicy -Scope Process Bypass
 cd path\to\magpie-lcd-bridge
 Set-ExecutionPolicy -Scope Process Bypass
 ```
+
+### 托盘控制器
+
+```powershell
+.\scripts\start-controller.ps1
+.\scripts\status-controller.ps1
+.\scripts\stop-controller.ps1
+```
+
+托盘控制器是推荐入口；日常启停、刷新间隔和自启优先在托盘设置中操作。
+
+### 旧版计划任务
 
 ### 启动
 
@@ -304,7 +325,7 @@ Test-NetConnection 127.0.0.1 -Port 3425
 uv run python -m unittest -v
 ```
 
-当前测试覆盖协议编码、额度映射、画面生成、成本三位数排版、BLE 写入超时、扫描设备复用、旧连接回调隔离、限时连接清理、后台数据读取和失败重连间隔。
+当前测试覆盖协议编码、额度映射、画面生成、成本三位数排版、BLE 写入超时、扫描设备复用、旧连接回调隔离、限时连接清理、后台数据读取、失败重连间隔，以及托盘设置、间隔校验和 worker 生命周期。
 
 ## 文档
 
@@ -314,6 +335,7 @@ uv run python -m unittest -v
 - [设备说明](docs/device.md)
 - [BLE 图片协议](docs/protocol.md)
 - [运行与维护](docs/operations.md)
+- [Windows 托盘控制器](docs/controller.md)
 - [实机图片说明](docs/images/README.md)
 
 ## 致谢
