@@ -15,6 +15,8 @@ from typing import Callable
 
 from PIL import Image, ImageDraw
 
+import ble_lease
+
 ROOT = Path(__file__).resolve().parent
 WORKER_SCRIPT = ROOT / "magpie_lcd.py"
 CONFIG_PATH = ROOT / "config.json"
@@ -311,24 +313,37 @@ class TrayApp:
         self.settings_lock = threading.Lock()
         self.stop_event = threading.Event()
         self.icon = None
+        self.lease = ble_lease.BleLeaseManager(
+            self.worker,
+            self.worker_lock,
+            interval_getter=lambda: self.settings.interval_seconds,
+            on_change=self._update_menu,
+        )
+        self.lease_server: ble_lease.BleLeasePipeServer | None = None
+        self.lease_watchdog: ble_lease.LeaseWatchdog | None = None
 
     def _worker_running(self) -> bool:
         with self.worker_lock:
             return self.worker.is_running()
 
     def _start_worker(self) -> None:
-        with self.worker_lock:
-            self.worker.start(self.settings.interval_seconds)
+        owner = self.lease.start_worker_if_idle(self.settings.interval_seconds)
+        if owner:
+            raise RuntimeError(f"蓝牙正由 {owner} 临时占用")
 
     def _stop_worker(self) -> None:
         with self.worker_lock:
             self.worker.stop()
 
     def _restart_worker(self) -> None:
-        with self.worker_lock:
-            self.worker.restart(self.settings.interval_seconds)
+        owner = self.lease.restart_worker_if_idle(self.settings.interval_seconds)
+        if owner:
+            raise RuntimeError(f"蓝牙正由 {owner} 临时占用")
 
     def _status_label(self, _item=None) -> str:
+        owner = self.lease.owner
+        if owner:
+            return f"BLE 由 {owner} 临时占用 · LCD 已暂停"
         if not self._worker_running():
             return f"已停止 · {self.settings.interval_seconds} 秒"
         with self.worker_lock:
@@ -630,6 +645,9 @@ class TrayApp:
                 log.debug("更新托盘菜单失败", exc_info=True)
 
     def _ble_label(self) -> tuple[str, str]:
+        owner = self.lease.owner
+        if owner:
+            return f"由 {owner} 占用", "#a36a1f"
         if not self._worker_running():
             return "已停止", "#6b777a"
         with self.worker_lock:
@@ -643,6 +661,10 @@ class TrayApp:
     def _quit(self, _icon=None, _item=None) -> None:
         self.stop_event.set()
         try:
+            if self.lease_watchdog is not None:
+                self.lease_watchdog.stop()
+            if self.lease_server is not None:
+                self.lease_server.stop()
             self._stop_worker()
         finally:
             if self.icon is not None:
@@ -671,7 +693,11 @@ class TrayApp:
                 pystray.MenuItem("退出控制器", self._quit),
             ),
         )
-        if self.settings.start_on_launch:
+        self.lease_server = ble_lease.BleLeasePipeServer(self.lease)
+        self.lease_watchdog = ble_lease.LeaseWatchdog(self.lease)
+        self.lease_server.start()
+        self.lease_watchdog.start()
+        if self.settings.start_on_launch and self.lease.owner is None:
             try:
                 self._start_worker()
             except Exception as error:
@@ -680,6 +706,10 @@ class TrayApp:
         try:
             self.icon.run()
         finally:
+            if self.lease_watchdog is not None:
+                self.lease_watchdog.stop()
+            if self.lease_server is not None:
+                self.lease_server.stop()
             self._stop_worker()
 
 

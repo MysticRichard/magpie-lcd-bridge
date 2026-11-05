@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import ble_lease
 import magpie_lcd_control as control
 
 
@@ -149,6 +150,184 @@ class WorkerLogTests(unittest.TestCase):
                     control.recent_worker_state(datetime(2026, 11, 5, 12, 1, 30)),
                     ("unknown", None),
                 )
+
+
+class FakeLeaseWorker:
+    def __init__(self, running: bool) -> None:
+        self.running = running
+        self.stops = 0
+        self.starts = []
+
+    def is_running(self) -> bool:
+        return self.running
+
+    def stop(self) -> bool:
+        self.stops += 1
+        self.running = False
+        return True
+
+    def start(self, interval: int) -> bool:
+        self.starts.append(interval)
+        self.running = True
+        return True
+
+    def restart(self, interval: int) -> bool:
+        self.stop()
+        return self.start(interval)
+
+
+class BleLeaseManagerTests(unittest.TestCase):
+    def make_manager(
+        self, *, running: bool = True, now: float = 0.0
+    ) -> tuple[ble_lease.BleLeaseManager, FakeLeaseWorker, list[float]]:
+        worker = FakeLeaseWorker(running)
+        clock_value = [now]
+        manager = ble_lease.BleLeaseManager(
+            worker,
+            control.threading.RLock(),
+            interval_getter=lambda: 60,
+            clock=lambda: clock_value[0],
+            token_factory=lambda: "token-test",
+            release_wait=0,
+        )
+        return manager, worker, clock_value
+
+    def test_acquire_stops_running_worker_and_release_resumes_it(self) -> None:
+        manager, worker, _ = self.make_manager()
+
+        granted = manager.acquire("inkmemo", 120)
+
+        self.assertTrue(granted["ok"])
+        self.assertEqual(granted["state"], "granted")
+        self.assertEqual(granted["token"], "token-test")
+        self.assertFalse(worker.is_running())
+        self.assertEqual(worker.stops, 1)
+
+        released = manager.release("token-test")
+
+        self.assertTrue(released["ok"])
+        self.assertEqual(worker.starts, [60])
+        self.assertTrue(worker.is_running())
+
+    def test_release_does_not_start_a_worker_that_was_already_stopped(self) -> None:
+        manager, worker, _ = self.make_manager(running=False)
+
+        manager.acquire("inkmemo", 120)
+        manager.release("token-test")
+
+        self.assertEqual(worker.stops, 0)
+        self.assertEqual(worker.starts, [])
+
+    def test_second_owner_gets_busy_without_overwriting_the_lease(self) -> None:
+        manager, _, _ = self.make_manager()
+
+        self.assertTrue(manager.acquire("inkmemo", 120)["ok"])
+        busy = manager.acquire("other", 120)
+
+        self.assertFalse(busy["ok"])
+        self.assertEqual(busy["state"], "busy")
+        self.assertEqual(busy["owner"], "inkmemo")
+
+    def test_heartbeat_extends_the_lease_and_bad_token_is_rejected(self) -> None:
+        manager, _, clock = self.make_manager()
+        manager.acquire("inkmemo", 30)
+        clock[0] = 20
+
+        renewed = manager.heartbeat("token-test", 60)
+        invalid = manager.heartbeat("wrong", 60)
+
+        self.assertTrue(renewed["ok"])
+        self.assertEqual(renewed["expires_in"], 60)
+        self.assertFalse(invalid["ok"])
+        self.assertEqual(invalid["state"], "invalid_token")
+
+    def test_expired_lease_automatically_resumes_the_worker(self) -> None:
+        manager, worker, clock = self.make_manager()
+        manager.acquire("inkmemo", 30)
+        clock[0] = 31
+
+        status = manager.status()
+
+        self.assertIsNone(status["lease"])
+        self.assertTrue(worker.is_running())
+        self.assertEqual(worker.starts, [60])
+
+    def test_pipe_server_round_trip_uses_explicit_key(self) -> None:
+        import uuid
+
+        worker = FakeLeaseWorker(True)
+        manager = ble_lease.BleLeaseManager(
+            worker,
+            control.threading.RLock(),
+            interval_getter=lambda: 60,
+            token_factory=lambda: "pipe-token",
+            release_wait=0,
+        )
+        with TemporaryDirectory() as directory:
+            pipe_name = rf"\\.\pipe\MagpieLcdBridge.Test.{uuid.uuid4().hex}"
+            key_path = Path(directory) / "lease.key"
+            server = ble_lease.BleLeasePipeServer(
+                manager, pipe_name=pipe_name, key_path=key_path
+            )
+            server.start()
+            try:
+                granted = ble_lease.request_lease(
+                    {"op": "acquire", "owner": "inkmemo", "ttl_seconds": 120},
+                    pipe_name=pipe_name,
+                    key_path=key_path,
+                )
+                released = ble_lease.request_lease(
+                    {"op": "release", "owner": "inkmemo", "token": "pipe-token"},
+                    pipe_name=pipe_name,
+                    key_path=key_path,
+                )
+            finally:
+                server.stop()
+
+        self.assertTrue(granted["ok"])
+        self.assertTrue(released["ok"])
+        self.assertTrue(worker.is_running())
+
+    def test_tray_blocks_start_and_restart_while_external_lease_is_active(self) -> None:
+        worker = FakeLeaseWorker(False)
+        app = object.__new__(control.TrayApp)
+        app.worker = worker
+        app.worker_lock = control.threading.RLock()
+        app.settings = control.Settings(interval_seconds=60)
+        app.lease = ble_lease.BleLeaseManager(
+            worker,
+            app.worker_lock,
+            interval_getter=lambda: 60,
+            token_factory=lambda: "token-test",
+            release_wait=0,
+        )
+        app.lease.acquire("inkmemo", 120)
+
+        with self.assertRaisesRegex(RuntimeError, "inkmemo"):
+            app._start_worker()
+        with self.assertRaisesRegex(RuntimeError, "inkmemo"):
+            app._restart_worker()
+        self.assertEqual(worker.starts, [])
+
+    def test_tray_starts_and_restarts_only_after_lease_release(self) -> None:
+        worker = FakeLeaseWorker(False)
+        app = object.__new__(control.TrayApp)
+        app.worker = worker
+        app.worker_lock = control.threading.RLock()
+        app.settings = control.Settings(interval_seconds=60)
+        app.lease = ble_lease.BleLeaseManager(
+            worker,
+            app.worker_lock,
+            interval_getter=lambda: 60,
+            token_factory=lambda: "token-test",
+            release_wait=0,
+        )
+
+        app._start_worker()
+        app._restart_worker()
+
+        self.assertTrue(worker.is_running())
+        self.assertEqual(worker.starts, [60, 60])
 
 
 if __name__ == "__main__":
