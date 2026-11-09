@@ -56,7 +56,7 @@ As a user, I want the tray and settings window to open the existing quota config
 - **FR-005**: Settings MUST persist in `%LOCALAPPDATA%\MagpieLcdBridge\settings.json` and MUST NOT enter Git.
 - **FR-006**: The refresh interval MUST be an integer from 30 to 3600 seconds, with 60 seconds as the default.
 - **FR-007**: Changing the interval while the worker is running MUST apply by restarting the worker.
-- **FR-008**: The controller MUST support a current-user `Run` startup entry and MUST NOT require administrator privileges.
+- **FR-008**: The controller MUST support a hidden current-user logon scheduled task, using an interactive limited token without storing a password. Its settings and scripts MUST manage the same task and remove this project's legacy `Run` value only after successful task registration. This replaces the `Run` entry following the user's 2026-11-06 migration approval.
 - **FR-009**: The controller MUST stop its worker when it exits through the tray.
 - **FR-010**: Failures to start, stop, open a file, read settings, or update the startup entry MUST be reported to the user or controller log.
 - **FR-011**: The existing PowerShell lifecycle scripts MUST remain usable as a fallback.
@@ -67,7 +67,7 @@ As a user, I want the tray and settings window to open the existing quota config
 - **Controller Settings**: interval, login startup, and automatic display preference stored per user.
 - **Worker Process**: the existing `magpie_lcd.py run --interval N` process managed by the controller.
 - **Controller State**: whether the worker is running, the last observed refresh/start time, and the latest error summary.
-- **Startup Entry**: the current-user registry value that launches the controller after login.
+- **Startup Entry**: the enabled `Magpie LCD Bridge Controller` task that launches the controller after the current user logs in.
 
 ## 5. Success Criteria
 

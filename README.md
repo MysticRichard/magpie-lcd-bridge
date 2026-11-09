@@ -164,6 +164,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 它不会打开控制台窗口，托盘菜单可完成启动/停止、立即刷新、设置和退出。刷新间隔和登录自启可在设置窗口中调整。详见 [托盘控制器说明](docs/controller.md)。
 
+登录自启使用当前用户的隐藏任务 `Magpie LCD Bridge Controller`，可在托盘设置中开启，或执行 `.\scripts\install-controller-autostart.ps1`。安装成功后会移除本项目原来的注册表 Run 项；实际注销/登录后的启动需要单独验证。
+
 ### 方案五：旧版计划任务（兼容/回退）
 
 如果不需要托盘，仍可安装原有的隐藏计划任务：
@@ -173,7 +175,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-autostart.ps1
 ```
 
-它会创建当前用户的计划任务 `Magpie LCD Bridge`，在 Windows 用户登录后使用 `.venv\Scripts\pythonw.exe` 启动。不要同时启用计划任务和控制器登录自启。
+它会创建当前用户的旧 worker 任务 `Magpie LCD Bridge`，在 Windows 用户登录后使用 `.venv\Scripts\pythonw.exe` 启动。不要同时启用旧 worker 任务和新控制器任务。
 
 ## 日常开关
 

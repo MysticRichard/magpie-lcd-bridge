@@ -1,7 +1,15 @@
 $ErrorActionPreference = "Stop"
 
-$runValue = "Magpie LCD Bridge Control"
-$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$taskName = "Magpie LCD Bridge Controller"
 
-Remove-ItemProperty -Path $runKey -Name $runValue -ErrorAction SilentlyContinue
-Write-Host "Removed current-user autostart: $runValue"
+$task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($task) {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+}
+
+Remove-ItemProperty `
+    -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+    -Name "Magpie LCD Bridge Control" `
+    -ErrorAction SilentlyContinue
+
+Write-Host "Removed current-user logon task: $taskName"

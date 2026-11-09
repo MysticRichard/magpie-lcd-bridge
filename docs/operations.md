@@ -16,7 +16,7 @@
 
 ## 开机自启
 
-推荐使用托盘控制器的当前用户启动项：
+推荐使用托盘控制器的当前用户隐藏登录计划任务 `Magpie LCD Bridge Controller`：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -25,6 +25,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 启用前必须先移除旧的 `Magpie LCD Bridge` 计划任务，否则登录时会同时启动两个 worker。托盘控制器的设置写入 `%LOCALAPPDATA%\MagpieLcdBridge\settings.json`，不会进入 Git。
+
+托盘设置中的自启开关与安装/卸载脚本管理同一个任务。迁移成功后会移除旧的 `Magpie LCD Bridge Control` Run 值。任务采用当前用户交互令牌，无需保存密码；安装后仍须实际注销/登录验收。任务配置、排查及回退见 [托盘控制器说明](controller.md#安装与迁移)。
 
 旧版计划任务仍作为兼容/回退入口：
 

@@ -44,7 +44,7 @@ The existing `magpie_lcd.py`, BLE protocol, renderer, `config.json` schema, and 
 2. It builds a worker command using the current Python executable and the saved interval, then starts `magpie_lcd.py run --interval N` as a hidden child process.
 3. The tray reads the child process state and displays a status label.
 4. Start/stop actions invoke the worker manager. Immediate refresh and interval changes stop and restart the worker so the new command is applied.
-5. The settings window writes settings atomically outside the repository and updates the current-user `Run` entry.
+5. The settings window writes settings atomically outside the repository and updates the hidden current-user logon task through PowerShell ScheduledTasks.
 6. When the user exits, the controller stops the worker and then stops the tray icon.
 
 ### Controller Menu Contract
@@ -59,7 +59,7 @@ The existing `magpie_lcd.py`, BLE protocol, renderer, `config.json` schema, and 
 
 ## 5. Phase 0: Research and Decisions
 
-- Follow the existing InkMemo pattern for `pystray`, Tkinter settings, a named mutex, and `HKCU\Run`.
+- Follow the existing pattern for `pystray`, Tkinter settings, and a named mutex. The original `HKCU\Run` startup mechanism is superseded by the approved 2026-11-06 logon-task migration.
 - Use a child process rather than moving the asyncio BLE loop into the tray process; this preserves the previously verified worker behavior.
 - Use a local request file to make a second launch open the existing settings window.
 - Keep the current worker PowerShell scripts as a fallback until the tray path is accepted.
@@ -93,6 +93,17 @@ The existing `magpie_lcd.py`, BLE protocol, renderer, `config.json` schema, and 
 - Manual first-run check: launch via `pythonw`, verify one tray icon, start/stop, settings, preview/config links, and exit.
 - Target-device check: after stopping the worker, confirm BLE is released and the LCD may return to clock mode; start again and confirm a frame is sent.
 - Login startup check: verify exactly one startup entry exists, then test the user-facing logon path separately.
+
+## 2026-11-06 Autostart Repair
+
+- Evidence: Windows logged in at 09:01:53; Shell enumerated Run commands but did not execute the LCD entry. Paths and imports were valid; the precise reason for the omission remains unknown.
+- Use the already verified `Register-ScheduledTask` interface, not `schtasks.exe /Create`, which returned access denied in this user session.
+- Both the tray helper and scripts configure `Magpie LCD Bridge Controller`: current-user logon trigger, Interactive/Limited principal, hidden, battery allowed, IgnoreNew, 3650-day runtime limit, explicit executable/arguments/working directory.
+- Encode the PowerShell command as UTF-16LE Base64 and quote paths as literal strings. Capture errors and propagate them to the existing settings error path; retain the legacy Run value if registration fails.
+- Disable removes the startup task without stopping the current controller. Read state reflects disabled tasks as off. Remove the legacy Run value only after a successful operation.
+- Verify create/read/disable/delete on an isolated task without launching it; then verify the real task and frame logs. Actual logout/login and user-visible acceptance remain separate.
+- Rollback: uninstall the new controller task, restore the previous controller startup implementation if needed, or use the existing manual start script. Do not enable the legacy worker task alongside the controller.
+- InkMemo changes and deployment are owned by the other authorized chat; this repair does not modify its files, processes, or tasks.
 
 ## 8. Deployment, Recovery, and Known Limits
 

@@ -48,9 +48,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 它不是项目文件，不会进入 Git。刷新间隔允许 `30` 到 `3600` 秒，默认仍为 `60` 秒。
 
-「登录 Windows 后自动启动控制器」使用当前用户注册表启动项，不需要管理员权限。启用前必须先移除旧的计划任务，避免两个启动源同时拉起两个 worker。
+「登录 Windows 后自动启动控制器」使用当前用户的隐藏登录计划任务 `Magpie LCD Bridge Controller`，以交互用户、普通权限运行。设置中的勾选状态读取任务是否启用；取消勾选只移除下次登录的启动配置，当前控制器仍可继续使用。若任务注册失败，会提示错误并保留原启动项。
 
-## 从计划任务迁移
+启用前必须先移除旧的 worker 计划任务 `Magpie LCD Bridge`，避免两个启动源同时拉起两个 worker。新任务启动的是托盘控制器，由控制器管理唯一的 worker。
+
+## 安装与迁移
 
 如果之前安装过隐藏计划任务：
 
@@ -72,6 +74,24 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```powershell
 .\scripts\uninstall-controller-autostart.ps1
 ```
+
+此前使用注册表 Run 的用户，重新执行 `install-controller-autostart.ps1` 即可迁移：先注册任务，成功后再删除本项目旧的 `Magpie LCD Bridge Control` Run 值，不改其他应用的启动项。安装自启不会立即启动程序；当前会话使用 `start-controller.ps1`。
+
+任务设置为当前用户登录触发、隐藏、允许电池运行、忽略重复实例，运行时限为 3650 天。任务的动作明确保存 `.venv\Scripts\pythonw.exe`、控制器绝对路径和项目工作目录；不保存用户密码。默认刷新间隔仍由控制器设置决定。
+
+排查自启：
+
+```powershell
+.\scripts\status-controller.ps1
+Get-ScheduledTask -TaskName "Magpie LCD Bridge Controller"
+Get-ScheduledTaskInfo -TaskName "Magpie LCD Bridge Controller"
+```
+
+`Ready` 表示等待触发，`Running` 表示任务正在运行；任务注册成功与真正登录后启动是两项独立验证。安装后需要在方便时注销并重新登录，确认只有一个托盘控制器且 worker 恢复发送。睡眠唤醒不会触发这里的登录自启。
+
+本机 2026-11-06 的现场结果：Windows 登录时没有执行原 Run 项；普通用户 `schtasks.exe /Create` 返回拒绝访问，而 `Register-ScheduledTask` 配合当前用户的交互令牌成功。因此脚本和托盘开关均使用 PowerShell ScheduledTasks 接口。Windows 跳过 Run 项的内部原因尚未查明。
+
+回退时先取消新任务，再从已知良好的源码版本恢复 Run 启动配置；也可用 `start-controller.ps1` 手动启动。旧 worker 任务仅用于独立回退，不能与新控制器任务同时开启，否则会绕过控制器的 BLE 租约协调。
 
 ## PowerShell 兼容控制
 

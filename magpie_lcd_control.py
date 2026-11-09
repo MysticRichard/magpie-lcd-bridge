@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import logging
@@ -35,6 +36,7 @@ DEFAULT_INTERVAL = 60
 MIN_INTERVAL = 30
 MAX_INTERVAL = 3600
 DTOKEN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+AUTOSTART_TASK_NAME = "Magpie LCD Bridge Controller"
 
 log = logging.getLogger("magpie-lcd-control")
 
@@ -116,38 +118,98 @@ def build_worker_command(interval: int) -> list[str]:
     ]
 
 
-def startup_command() -> str:
+def _powershell_args(script: str) -> list[str]:
+    script = (
+        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; "
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); " + script
+    )
+    return [
+        str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        base64.b64encode(script.encode("utf-16le")).decode("ascii"),
+    ]
+
+
+def build_autostart_create_args() -> list[str]:
     if getattr(sys, "frozen", False):
-        return subprocess.list2cmdline([sys.executable])
-    return subprocess.list2cmdline([str(worker_python()), str(Path(__file__).resolve())])
+        executable, arguments = sys.executable, ""
+    else:
+        executable = str(worker_python())
+        arguments = subprocess.list2cmdline([str(Path(__file__).resolve())])
+    executable = executable.replace("'", "''")
+    arguments = arguments.replace("'", "''")
+    argument_option = f" -Argument '{arguments}'" if arguments else ""
+    directory = str(ROOT).replace("'", "''")
+    return _powershell_args(
+        "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name; "
+        f"$action = New-ScheduledTaskAction -Execute '{executable}'"
+        f"{argument_option} -WorkingDirectory '{directory}'; "
+        "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user; "
+        "$principal = New-ScheduledTaskPrincipal -UserId $user "
+        "-LogonType Interactive -RunLevel Limited; "
+        "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries "
+        "-DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew "
+        "-ExecutionTimeLimit (New-TimeSpan -Days 3650); "
+        f"Register-ScheduledTask -TaskName '{AUTOSTART_TASK_NAME}' -TaskPath '\\' "
+        "-Action $action -Trigger $trigger -Principal $principal -Settings $settings "
+        "-Force | Out-Null"
+    )
+
+
+def _run_autostart_command(args: list[str]) -> str:
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        creationflags=DTOKEN,
+        check=False,
+        timeout=30,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(detail or f"计划任务操作失败，退出码 {result.returncode}")
+    return result.stdout.strip()
+
+
+def _remove_legacy_run_value() -> None:
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, RUN_VALUE)
+    except FileNotFoundError:
+        pass
 
 
 def set_autostart(enabled: bool) -> None:
     if os.name != "nt":
         raise RuntimeError("登录自启只支持 Windows")
-    import winreg
 
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-        if enabled:
-            winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, startup_command())
-        else:
-            try:
-                winreg.DeleteValue(key, RUN_VALUE)
-            except FileNotFoundError:
-                pass
+    if enabled:
+        command = build_autostart_create_args()
+    else:
+        command = _powershell_args(
+            "$task = Get-ScheduledTask -TaskPath '\\' | "
+            f"Where-Object TaskName -eq '{AUTOSTART_TASK_NAME}'; "
+            "if ($task) { $task | Unregister-ScheduledTask -Confirm:$false }"
+        )
+    _run_autostart_command(command)
+    _remove_legacy_run_value()
 
 
 def read_autostart() -> bool:
     if os.name != "nt":
         return False
-    import winreg
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ) as key:
-            winreg.QueryValueEx(key, RUN_VALUE)
-            return True
-    except FileNotFoundError:
-        return False
+    return _run_autostart_command(_powershell_args(
+        "$task = Get-ScheduledTask -TaskPath '\\' | "
+        f"Where-Object TaskName -eq '{AUTOSTART_TASK_NAME}'; "
+        "if ($task -and $task.Settings.Enabled) { 'enabled' }"
+    )) == "enabled"
 
 
 class SingleInstance:

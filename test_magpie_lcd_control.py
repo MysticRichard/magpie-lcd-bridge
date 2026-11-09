@@ -1,3 +1,4 @@
+import base64
 import subprocess
 import unittest
 from datetime import datetime
@@ -62,6 +63,33 @@ class ControllerSettingsTests(unittest.TestCase):
         self.assertEqual(command[-2:], ["--interval", "90"])
         self.assertIn("run", command)
         self.assertEqual(command[command.index("run") + 1 :], ["--interval", "90"])
+
+    def test_autostart_uses_a_current_user_logon_task(self) -> None:
+        command = control.build_autostart_create_args()
+
+        self.assertEqual(Path(command[0]).name, "powershell.exe")
+        self.assertEqual(command[1:5], [
+            "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+        ])
+        self.assertEqual(command[5], "-EncodedCommand")
+        script = base64.b64decode(command[6]).decode("utf-16le")
+        self.assertIn("Register-ScheduledTask", script)
+        self.assertIn("-AtLogOn", script)
+        self.assertIn("-Hidden", script)
+
+    def test_failed_task_registration_preserves_legacy_autostart(self) -> None:
+        result = subprocess.CompletedProcess([], 1, "", "Access denied")
+        with patch.object(control.subprocess, "run", return_value=result), patch.object(
+            control, "_remove_legacy_run_value"
+        ) as remove:
+            with self.assertRaisesRegex(RuntimeError, "Access denied"):
+                control.set_autostart(True)
+            remove.assert_not_called()
+
+    def test_autostart_reports_a_disabled_task_as_off(self) -> None:
+        result = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(control.subprocess, "run", return_value=result):
+            self.assertFalse(control.read_autostart())
 
 
 class WorkerProcessTests(unittest.TestCase):

@@ -30,9 +30,12 @@ $workers = @($allProcesses | Where-Object {
     $_.CommandLine -like "*magpie_lcd.py*run*"
 })
 
+$startupTask = Get-ScheduledTask -TaskName "Magpie LCD Bridge Controller" -ErrorAction SilentlyContinue
 [pscustomobject]@{
     Controller = if ($controller.Count -gt 0) { "Running" } else { "Stopped" }
     Worker = if ($workers.Count -gt 0) { "Running" } else { "Stopped" }
+    Autostart = if ($startupTask -and $startupTask.Settings.Enabled) { "Enabled" } else { "Disabled" }
+    StartupTask = if ($startupTask) { [string]$startupTask.State } else { "Not installed" }
 } | Format-List
 
 $legacyTask = Get-ScheduledTask -TaskName "Magpie LCD Bridge" -ErrorAction SilentlyContinue
