@@ -316,6 +316,34 @@ class BleLeaseManagerTests(unittest.TestCase):
         self.assertTrue(released["ok"])
         self.assertTrue(worker.is_running())
 
+    def test_wrong_key_does_not_stop_the_pipe_server(self) -> None:
+        import uuid
+        from multiprocessing import AuthenticationError
+        from multiprocessing.connection import Client
+
+        manager, _, _ = self.make_manager()
+        with TemporaryDirectory() as directory:
+            pipe_name = rf"\\.\pipe\MagpieLcdBridge.Test.{uuid.uuid4().hex}"
+            key_path = Path(directory) / "lease.key"
+            server = ble_lease.BleLeasePipeServer(
+                manager, pipe_name=pipe_name, key_path=key_path
+            )
+            server.start()
+            try:
+                with self.assertRaises(AuthenticationError):
+                    Client(pipe_name, family="AF_PIPE", authkey=b"stale-key")
+                server.thread.join(timeout=0.2)
+                self.assertTrue(server.thread.is_alive())
+                status = ble_lease.request_lease(
+                    {"op": "status"}, pipe_name=pipe_name, key_path=key_path
+                )
+                self.assertEqual(status["state"], "idle")
+            finally:
+                if not server.thread.is_alive():
+                    server.listener.close()
+                    server.thread = None
+                server.stop()
+
     def test_tray_blocks_start_and_restart_while_external_lease_is_active(self) -> None:
         worker = FakeLeaseWorker(False)
         app = object.__new__(control.TrayApp)

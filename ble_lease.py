@@ -8,6 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client, Listener
 from pathlib import Path
 from typing import Callable
@@ -295,7 +296,11 @@ class BleLeasePipeServer:
     def _serve(self) -> None:
         assert self.listener is not None
         while True:
-            connection = self.listener.accept()
+            try:
+                connection = self.listener.accept()
+            except AuthenticationError:
+                log.warning("BLE 租约认证失败，继续接受请求")
+                continue
             try:
                 raw = connection.recv_bytes(MAX_MESSAGE_BYTES)
                 response = self._handle(raw)
