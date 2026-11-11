@@ -146,11 +146,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 启动/停止显示。
 - 立即刷新。
 - 设置刷新间隔和登录自启。
+- 重新创建带图标的桌面快捷方式；快捷方式可启动控制器或直接打开设置。
 - 打开最新预览。
 - 打开 `config.json` 编辑额度。
 - 退出控制器。
 
-完整说明见 [Windows 托盘控制器](controller.md)。从旧计划任务迁移时，先执行 `uninstall-autostart.ps1`，确认旧任务已移除，再执行 `install-controller-autostart.ps1`，避免两个启动源同时运行。
+完整说明见 [Windows 托盘控制器](controller.md)。`install-controller-autostart.ps1` 首次安装会创建桌面快捷方式；误删后可在设置窗口重建。从旧计划任务迁移时，先执行 `uninstall-autostart.ps1`，确认旧任务已移除，再执行 `install-controller-autostart.ps1`，避免两个启动源同时运行。
 
 ## 8. 安装旧版 Windows 登录自启
 
@@ -242,6 +243,10 @@ BLE 连接已断开
 
 本节只给出最常用步骤；完整的字段、示例和故障排查见 [配置教程](configuration.md)。
 
+推荐先打开托盘菜单的 `设置`，在“额度显示”区域点击“重新读取”，从 Magpie 当前配置中勾选供应商和窗口。最多选择两个供应商，每个供应商最多三个窗口；保存后自动生成本机 `config.json`。需要自定义标题或短标签时，再按下面的手工结构编辑。
+
+点击“保存”后，窗口底部会显示“设置已保存”。保存期间按钮暂时禁用，不需要再点击确认弹窗。
+
 复制示例：
 
 ```powershell
@@ -271,6 +276,7 @@ Copy-Item config.example.json config.json
 - `title`：屏幕左侧卡片标题。
 - `windows[].name`：必须与 Magpie 返回的窗口名称一致。
 - `windows[].label`：屏幕圆环下方的短标签，可以自行改名。
+- 手工配置时，`windows` 数组顺序决定圆环从左到右的位置；通过设置窗口保存时自动按 `5H → 7D → 本月` 排序。
 
 布局限制：
 

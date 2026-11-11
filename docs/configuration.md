@@ -152,6 +152,8 @@ Invoke-RestMethod "http://127.0.0.1:3425/v1/magpie/usage?period=today" |
 
 ## 5. 配置文件结构
 
+日常使用可以直接打开托盘 `设置`，在“额度显示”区域从 Magpie 当前额度中勾选。设置窗口最多允许两个供应商、每个供应商最多三个窗口；保存时按短周期优先排列为 `5 hours → 7 days → Month`，同一名称前缀（例如 `Gemini`、`Claude & GPT`）分别排序。以下手工结构用于需要修改标题、短标签或明确自定义窗口顺序的场景。
+
 根对象必须包含 `quota_groups` 数组：
 
 ```json
@@ -169,6 +171,8 @@ Invoke-RestMethod "http://127.0.0.1:3425/v1/magpie/usage?period=today" |
 | `windows` | array | 是 | 额度窗口列表 |
 | `windows[].name` | string | 是 | Magpie 窗口名称 |
 | `windows[].label` | string | 是 | 屏幕下方短标签 |
+
+手工编辑 `config.json` 时，`windows` 数组顺序就是屏幕圆环从左到右的显示顺序。通过设置窗口保存时，程序会按 `5H → 7D → 本月` 自动排序。
 
 ## 6. 默认配置示例
 

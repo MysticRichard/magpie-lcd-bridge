@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import struct
+import tempfile
 import time
 import urllib.request
 import zlib
@@ -657,7 +658,18 @@ class LcdBle:
 
 def save_preview(image: Image.Image, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    image.save(output)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{output.stem}.",
+        suffix=".png",
+        dir=output.parent,
+    )
+    os.close(fd)
+    try:
+        image.save(temp_name, format="PNG")
+        os.replace(temp_name, output)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -25,9 +25,10 @@ while ($frontier.Count -gt 0) {
 }
 
 $workers = @($allProcesses | Where-Object {
-    $treeIds.Contains([int]$_.ProcessId) -and
     $_.Name -in @("python.exe", "pythonw.exe") -and
-    $_.CommandLine -like "*magpie_lcd.py*run*"
+    $_.CommandLine -and
+    $_.CommandLine -like "*$projectRoot*magpie_lcd.py*" -and
+    $_.CommandLine -like "*run*"
 })
 
 $startupTask = Get-ScheduledTask -TaskName "Magpie LCD Bridge Controller" -ErrorAction SilentlyContinue

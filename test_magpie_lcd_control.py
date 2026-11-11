@@ -1,4 +1,5 @@
 import base64
+import json
 import subprocess
 import unittest
 from datetime import datetime
@@ -77,6 +78,57 @@ class ControllerSettingsTests(unittest.TestCase):
         self.assertIn("-AtLogOn", script)
         self.assertIn("-Hidden", script)
 
+    def test_desktop_shortcut_opens_settings_through_controller(self) -> None:
+        command = control.build_desktop_shortcut_create_args()
+        script = base64.b64decode(command[6]).decode("utf-16le")
+
+        self.assertIn("DesktopDirectory", script)
+        self.assertIn("WScript.Shell", script)
+        self.assertIn(control.DESKTOP_SHORTCUT_NAME, script)
+        self.assertIn("magpie_lcd_control.py", script)
+        self.assertIn("--open-settings", script)
+        self.assertIn(control.SHORTCUT_ICON_PATH.name, script)
+        self.assertIn("IconLocation", script)
+
+    def test_desktop_shortcut_creation_returns_saved_path(self) -> None:
+        expected = Path(r"C:\Users\demo\Desktop") / control.DESKTOP_SHORTCUT_NAME
+        result = subprocess.CompletedProcess([], 0, f"{expected}\n", "")
+        with patch.object(control.subprocess, "run", return_value=result):
+            self.assertEqual(control.create_desktop_shortcut(), expected)
+
+    def test_shortcut_icon_contains_windows_sizes(self) -> None:
+        with control.Image.open(control.SHORTCUT_ICON_PATH) as image:
+            self.assertEqual(image.format, "ICO")
+            self.assertIn((256, 256), image.info["sizes"])
+
+    def test_tray_shortcut_action_reports_created_name(self) -> None:
+        app = object.__new__(control.TrayApp)
+        app.icon = None
+        expected = Path(r"C:\Users\demo\Desktop") / control.DESKTOP_SHORTCUT_NAME
+        with patch.object(control, "create_desktop_shortcut", return_value=expected):
+            self.assertEqual(
+                app._create_desktop_shortcut(),
+                f"桌面快捷方式已创建：{control.DESKTOP_SHORTCUT_NAME}",
+            )
+
+    def test_installer_creates_desktop_shortcut(self) -> None:
+        script = (control.ROOT / "scripts" / "install-controller-autostart.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("create-controller-shortcut.ps1", script)
+
+    def test_shortcut_argument_opens_settings_after_startup(self) -> None:
+        with patch.object(control.sys, "argv", ["magpie_lcd_control.py", "--open-settings"]), patch.object(
+            control, "SingleInstance"
+        ) as instance_class, patch.object(control, "TrayApp") as app_class, patch.object(
+            control.logging, "basicConfig"
+        ):
+            instance_class.return_value.acquire.return_value = True
+            self.assertEqual(control.main(), 0)
+
+        app_class.assert_called_once_with(open_settings_on_start=True)
+        app_class.return_value.run.assert_called_once_with()
+
     def test_failed_task_registration_preserves_legacy_autostart(self) -> None:
         result = subprocess.CompletedProcess([], 1, "", "Access denied")
         with patch.object(control.subprocess, "run", return_value=result), patch.object(
@@ -90,6 +142,177 @@ class ControllerSettingsTests(unittest.TestCase):
         result = subprocess.CompletedProcess([], 0, "", "")
         with patch.object(control.subprocess, "run", return_value=result):
             self.assertFalse(control.read_autostart())
+
+    def test_open_preview_reports_success_and_missing_file(self) -> None:
+        app = object.__new__(control.TrayApp)
+        app.icon = None
+        with TemporaryDirectory() as directory:
+            preview = Path(directory) / "last-frame.png"
+            with patch.object(control, "PREVIEW_PATH", preview):
+                self.assertIn("尚无预览", app._open_preview())
+                preview.write_bytes(b"png")
+                with patch.object(control.os, "startfile") as startfile:
+                    self.assertEqual(app._open_preview(), "已请求打开最新预览")
+                startfile.assert_called_once_with(preview)
+
+
+class QuotaSelectionTests(unittest.TestCase):
+    def test_magpie_payload_is_grouped_deduplicated_and_keeps_known_labels(self) -> None:
+        payload = {
+            "data": [
+                {
+                    "provider": "codex",
+                    "name": "Codex",
+                    "windows": [
+                        {"name": "5 hours"},
+                        {"name": "7 days"},
+                        {"name": "5 hours"},
+                    ],
+                },
+                {
+                    "provider": "workbuddy",
+                    "name": "WorkBuddy",
+                    "windows": [{"name": "Credits"}],
+                },
+                {
+                    "provider": "workbuddy",
+                    "name": "WorkBuddy",
+                    "windows": [
+                        {"name": "Credits"},
+                        {"name": "Extra credits"},
+                    ],
+                },
+                {
+                    "provider": "antigravity",
+                    "name": "Antigravity",
+                    "windows": [
+                        {"name": "Gemini · 7 days"},
+                        {"name": "Gemini · 5 hours"},
+                        {"name": "Claude & GPT · 7 days"},
+                        {"name": "Claude & GPT · 5 hours"},
+                    ],
+                },
+                {"provider": "empty", "name": "Empty", "windows": []},
+            ]
+        }
+        current = (
+            control.magpie_lcd.QuotaGroup(
+                "我的 Codex",
+                "codex",
+                (("5 hours", "五时"),),
+            ),
+        )
+
+        options = control.quota_option_groups(payload, current)
+
+        self.assertEqual([group.provider for group in options], [
+            "codex",
+            "workbuddy",
+            "antigravity",
+        ])
+        self.assertEqual(options[0].title, "我的 Codex")
+        self.assertEqual(options[0].windows, (("5 hours", "五时"), ("7 days", "7D")))
+        self.assertEqual(
+            options[1].windows,
+            (("Credits", "积分"), ("Extra credits", "额外")),
+        )
+        self.assertEqual(
+            options[2].windows,
+            (
+                ("Gemini · 5 hours", "G5H"),
+                ("Gemini · 7 days", "G7D"),
+                ("Claude & GPT · 5 hours", "CG5H"),
+                ("Claude & GPT · 7 days", "CG7D"),
+            ),
+        )
+
+    def test_saved_window_order_prefers_short_periods(self) -> None:
+        options = (
+            control.magpie_lcd.QuotaGroup(
+                "OpenCode Go",
+                "opencode-go",
+                (("Month", "本月"), ("7 days", "7D"), ("5 hours", "5H")),
+            ),
+        )
+
+        groups = control.build_quota_groups(
+            options,
+            {("opencode-go", "Month"), ("opencode-go", "7 days"), ("opencode-go", "5 hours")},
+        )
+
+        self.assertEqual(
+            groups[0].windows,
+            (("5 hours", "5H"), ("7 days", "7D"), ("Month", "本月")),
+        )
+
+    def test_selection_is_bounded_to_two_groups_and_three_windows(self) -> None:
+        options = (
+            control.magpie_lcd.QuotaGroup(
+                "A", "a", (("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"))
+            ),
+            control.magpie_lcd.QuotaGroup("B", "b", (("1", "1"),)),
+            control.magpie_lcd.QuotaGroup("C", "c", (("1", "1"),)),
+        )
+
+        with self.assertRaisesRegex(ValueError, "至少选择"):
+            control.build_quota_groups(options, set())
+        with self.assertRaisesRegex(ValueError, "最多选择两个"):
+            control.build_quota_groups(
+                options,
+                {("a", "1"), ("b", "1"), ("c", "1")},
+            )
+        with self.assertRaisesRegex(ValueError, "最多选择三个"):
+            control.build_quota_groups(
+                options,
+                {("a", "1"), ("a", "2"), ("a", "3"), ("a", "4")},
+            )
+
+    def test_checkbox_states_block_new_providers_and_fourth_window(self) -> None:
+        options = (
+            control.magpie_lcd.QuotaGroup(
+                "A", "a", (("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"))
+            ),
+            control.magpie_lcd.QuotaGroup("B", "b", (("1", "1"),)),
+            control.magpie_lcd.QuotaGroup("C", "c", (("1", "1"),)),
+        )
+
+        two_providers = control.quota_checkbox_states(
+            options, {("a", "1"), ("b", "1")}
+        )
+        self.assertFalse(two_providers[("c", "1")])
+        self.assertTrue(two_providers[("a", "2")])
+
+        one_group_full = control.quota_checkbox_states(
+            options, {("a", "1"), ("a", "2"), ("a", "3")}
+        )
+        self.assertFalse(one_group_full[("a", "4")])
+        self.assertTrue(one_group_full[("b", "1")])
+
+    def test_saved_selection_round_trips_through_worker_config_loader(self) -> None:
+        groups = (
+            control.magpie_lcd.QuotaGroup(
+                "Codex", "codex", (("5 hours", "5H"), ("7 days", "7D"))
+            ),
+            control.magpie_lcd.QuotaGroup(
+                "OpenCode Go", "opencode-go", (("Month", "本月"),)
+            ),
+        )
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+
+            control.save_quota_config(path, groups)
+
+            self.assertEqual(control.magpie_lcd.load_quota_config(path), groups)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(list(payload["quota_groups"][0]), [
+                "provider",
+                "title",
+                "windows",
+            ])
+
+    def test_empty_magpie_payload_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "没有可显示"):
+            control.quota_option_groups({"data": []})
 
 
 class WorkerProcessTests(unittest.TestCase):

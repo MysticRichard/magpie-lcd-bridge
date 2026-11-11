@@ -47,5 +47,7 @@ Remove-ItemProperty `
     -Name "Magpie LCD Bridge Control" `
     -ErrorAction SilentlyContinue
 
+& (Join-Path $PSScriptRoot "create-controller-shortcut.ps1")
+
 Write-Host "Installed current-user logon task: $taskName"
 Write-Host "The hidden controller will start after the next Windows logon."

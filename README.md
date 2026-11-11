@@ -12,7 +12,7 @@
 - 两组供应商额度圆环
 - 每个圆环的剩余百分比和短标签
 
-默认显示 Codex 和 OpenCode Go。额度供应商、标题、窗口名称和短标签都可以通过本机 `config.json` 调整。
+默认显示 Codex 和 OpenCode Go。打开托盘 `设置` 可以从 Magpie 当前额度中勾选要显示的供应商和窗口；高级用户仍可直接编辑本机 `config.json` 调整标题和短标签。
 
 ## 实机示例
 
@@ -113,7 +113,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\start-controller.ps1
 ```
 
-托盘图标提供启动/停止、立即刷新、设置、预览和额度配置入口。更完整的步骤、计划任务迁移和故障排查见 [托盘控制器说明](docs/controller.md) 与 [完整使用教程](docs/usage.md)。
+托盘右键菜单提供启动/停止、立即刷新、设置、创建桌面快捷方式和额度配置入口。快捷方式带独立图标；再次点击时，控制器未运行则启动，已运行则直接打开设置。更完整的步骤、计划任务迁移和故障排查见 [托盘控制器说明](docs/controller.md) 与 [完整使用教程](docs/usage.md)。
 
 如果墨笺 InkMemo 也需要使用本机 BLE，请保持托盘控制器运行。墨笺会在真正扫描或传图前通过本机命名管道申请租约；LCD 自动暂停，墨笺完成后恢复。协议和限制见 [跨项目 BLE 租约](docs/ble-coordination.md)。
 
@@ -164,7 +164,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 它不会打开控制台窗口，托盘菜单可完成启动/停止、立即刷新、设置和退出。刷新间隔和登录自启可在设置窗口中调整。详见 [托盘控制器说明](docs/controller.md)。
 
-登录自启使用当前用户的隐藏任务 `Magpie LCD Bridge Controller`，可在托盘设置中开启，或执行 `.\scripts\install-controller-autostart.ps1`。安装成功后会移除本项目原来的注册表 Run 项；实际注销/登录后的启动需要单独验证。
+登录自启使用当前用户的隐藏任务 `Magpie LCD Bridge Controller`，可在托盘设置中开启，或执行 `.\scripts\install-controller-autostart.ps1`。首次安装会同时创建桌面快捷方式 `Magpie LCD Bridge.lnk`，之后也可以从设置窗口重建。安装成功后会移除本项目原来的注册表 Run 项；实际注销/登录后的启动需要单独验证。
 
 ### 方案五：旧版计划任务（兼容/回退）
 
@@ -250,6 +250,16 @@ uv run python magpie_lcd.py run --address "DA-LCD 的蓝牙地址"
 当前自启脚本没有提供地址参数；多设备场景需要自行调整脚本，暂不是开箱即用功能。
 
 ## 额度配置
+
+日常选择推荐从托盘菜单打开 `设置`，在“额度显示”区域读取 Magpie 当前额度并勾选：
+
+- 最多选择两个供应商，对应屏幕上的两张额度卡。
+- 每个供应商最多选择三个窗口，对应每张卡最多三个圆环。
+- 勾选后的窗口按短周期优先排列：`5H → 7D → 本月`。
+- 保存后写入本机 `config.json`；Magpie 不可用时保留原配置。
+- 保存成功会在窗口底部显示“设置已保存”，不再弹出阻塞式确认框。
+
+需要自定义短标签或标题时，再手动编辑 `config.json`。
 
 复制示例配置：
 

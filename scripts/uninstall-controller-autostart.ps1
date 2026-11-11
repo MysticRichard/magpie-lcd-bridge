@@ -12,4 +12,11 @@ Remove-ItemProperty `
     -Name "Magpie LCD Bridge Control" `
     -ErrorAction SilentlyContinue
 
+$shortcutPath = Join-Path `
+    ([Environment]::GetFolderPath("DesktopDirectory")) `
+    "Magpie LCD Bridge.lnk"
+if (Test-Path -LiteralPath $shortcutPath) {
+    Remove-Item -LiteralPath $shortcutPath
+}
+
 Write-Host "Removed current-user logon task: $taskName"

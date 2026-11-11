@@ -33,7 +33,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 状态行：显示运行状态、刷新间隔和最近的刷新时间；外部租约期间显示 BLE 占用方。
 - `立即刷新`：重启 worker，让它立即读取 Magpie 并发送一帧。期间可能短暂断开 BLE。
 - `启动显示` / `停止显示`：启动或停止现有 worker。
-- `设置`：打开刷新间隔、登录自启和启动行为设置。
+- `设置`：打开刷新间隔、登录自启、启动行为和额度显示设置。
+- `创建桌面快捷方式`：创建或更新带项目图标的桌面入口。
 - `打开最新预览`：打开根目录的 `last-frame.png`。
 - `打开额度配置`：打开 `config.json`；文件不存在时提示参考 `config.example.json`，不会覆盖本地配置。
 - `退出控制器`：先停止 worker，再退出托盘。
@@ -47,6 +48,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 它不是项目文件，不会进入 Git。刷新间隔允许 `30` 到 `3600` 秒，默认仍为 `60` 秒。
+
+“额度显示”会从 Magpie `/v1/magpie/quotas` 读取当前非空的供应商和窗口。勾选后保存到项目根目录的本机 `config.json`，沿用现有两行额度卡、每行最多三个圆环的容量。最多选择两个供应商；每个供应商最多选择三个窗口。Magpie 暂时不可用时显示读取错误，不会清空或覆盖已有配置。
+
+保存额度选择时，如果 worker 正在运行且没有外部 BLE 租约，控制器会重启 worker 让新配置立即生效；BLE 正由其他项目占用时，配置仍会保存，并在租约释放后的正常恢复过程中读取。
+
+保存成功后，窗口底部显示“设置已保存”，不会弹出阻塞式确认框。保存执行期间按钮会暂时禁用，避免连续点击造成重复保存或多个弹窗。
+
+托盘菜单和设置窗口都可以创建 `Magpie LCD Bridge.lnk`，并写入 `assets\magpie-lcd.ico` 作为图标。点击快捷方式时，控制器未运行则启动控制器并打开设置；控制器已运行时只打开设置窗口。重复创建会覆盖同一个快捷方式。
 
 「登录 Windows 后自动启动控制器」使用当前用户的隐藏登录计划任务 `Magpie LCD Bridge Controller`，以交互用户、普通权限运行。设置中的勾选状态读取任务是否启用；取消勾选只移除下次登录的启动配置，当前控制器仍可继续使用。若任务注册失败，会提示错误并保留原启动项。
 
@@ -77,6 +86,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 此前使用注册表 Run 的用户，重新执行 `install-controller-autostart.ps1` 即可迁移：先注册任务，成功后再删除本项目旧的 `Magpie LCD Bridge Control` Run 值，不改其他应用的启动项。安装自启不会立即启动程序；当前会话使用 `start-controller.ps1`。
 
+`install-controller-autostart.ps1` 首次安装或重新安装时会创建桌面快捷方式；`uninstall-controller-autostart.ps1` 会同时移除该快捷方式。只需重建快捷方式时，可单独执行 `.\scripts\create-controller-shortcut.ps1`。
+
 任务设置为当前用户登录触发、隐藏、允许电池运行、忽略重复实例，运行时限为 3650 天。任务的动作明确保存 `.venv\Scripts\pythonw.exe`、控制器绝对路径和项目工作目录；不保存用户密码。默认刷新间隔仍由控制器设置决定。
 
 排查自启：
@@ -102,7 +113,7 @@ Get-ScheduledTaskInfo -TaskName "Magpie LCD Bridge Controller"
 .\scripts\stop-controller.ps1
 ```
 
-`stop-controller.ps1` 只结束托盘控制器及其子进程，不会结束旧的计划任务或无关 Python 程序。
+`stop-controller.ps1` 会结束当前项目的托盘控制器、worker 及其子进程，包括父控制器已退出后遗留的 worker；不会结束旧的计划任务或无关 Python 程序。
 
 ## 日志
 
@@ -117,3 +128,4 @@ Get-ScheduledTaskInfo -TaskName "Magpie LCD Bridge Controller"
 - “立即刷新”通过重启 worker 实现，会有几秒 BLE 重连窗口。
 - 托盘只管理自己的 worker，不会接管旧计划任务或其他 BLE 程序。
 - 与墨笺的蓝牙竞争通过本机命名管道租约协调；不遵守该协议的其他 BLE 程序仍可能竞争适配器。
+- 快捷方式保存当前仓库的绝对路径；移动仓库后需要在设置窗口重新创建。

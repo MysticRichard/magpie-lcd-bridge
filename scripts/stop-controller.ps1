@@ -9,9 +9,17 @@ $controllerIds = @(
         $_.CommandLine -like "*$projectRoot*magpie_lcd_control.py*"
     } | Select-Object -ExpandProperty ProcessId
 )
+$workerIds = @(
+    $allProcesses | Where-Object {
+        $_.Name -in @("python.exe", "pythonw.exe") -and
+        $_.CommandLine -and
+        $_.CommandLine -like "*$projectRoot*magpie_lcd.py*" -and
+        $_.CommandLine -like "*run*"
+    } | Select-Object -ExpandProperty ProcessId
+)
 
 $treeIds = [System.Collections.Generic.HashSet[int]]::new()
-$frontier = @($controllerIds)
+$frontier = @(@($controllerIds) + @($workerIds))
 while ($frontier.Count -gt 0) {
     $next = @()
     foreach ($id in $frontier) {
@@ -34,5 +42,5 @@ foreach ($process in $targets) {
     Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Stopped the controller and its child processes."
+Write-Host "Stopped the controller and project workers."
 Write-Host "The LCD should return to its clock mode after BLE disconnects."

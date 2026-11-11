@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from PIL import Image
+
 from magpie_lcd import (
     DATA_UUID,
     FORMAT_RGB565_DELTA_PACKBITS,
@@ -33,6 +35,7 @@ from magpie_lcd import (
     render_dashboard,
     refresh_delay,
     row_delta,
+    save_preview,
 )
 
 
@@ -54,6 +57,17 @@ def unpack_bits(data: bytes) -> bytes:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_preview_is_replaced_atomically(self) -> None:
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "last-frame.png"
+            output.write_bytes(b"old")
+
+            save_preview(Image.new("RGB", (32, 24), "red"), output)
+
+            with Image.open(output) as image:
+                self.assertEqual(image.size, (32, 24))
+            self.assertEqual(list(output.parent.glob(".last-frame.*.png")), [])
+
     def test_failed_refresh_retries_quickly(self) -> None:
         self.assertEqual(refresh_delay(60, True), 10)
         self.assertEqual(refresh_delay(60, False), 60)
