@@ -627,6 +627,7 @@ class TrayApp:
         self.lease_server: ble_lease.BleLeasePipeServer | None = None
         self.lease_watchdog: ble_lease.LeaseWatchdog | None = None
         self.open_settings_on_start = open_settings_on_start
+        self.ui_root = None
 
     def _worker_running(self) -> bool:
         with self.worker_lock:
@@ -743,12 +744,17 @@ class TrayApp:
         return f"桌面快捷方式已创建：{path.name}"
 
     def _open_settings(self, _icon=None, _item=None) -> None:
+        if self.settings_lock.locked():
+            return
+        request_settings()
+
+    def _show_settings(self, parent=None) -> None:
         if not self.settings_lock.acquire(blocking=False):
             return
         try:
             import tkinter as tk
 
-            self._settings_window(tk)
+            self._settings_window(tk, parent)
         finally:
             self.settings_lock.release()
             self._update_menu()
@@ -785,16 +791,19 @@ class TrayApp:
                 return f"设置已保存，但当前无法立即重启显示：{error}"
         return None
 
-    def _settings_window(self, tk) -> None:
-        root = tk.Tk()
+    def _settings_window(self, tk, parent=None) -> None:
+        root = tk.Toplevel(parent) if parent is not None else tk.Tk()
+        closed = threading.Event()
         root.title("Magpie LCD Bridge 设置")
         root.geometry("720x760")
         root.resizable(True, True)
         root.configure(bg="#f4f7f7")
 
         def close_window() -> None:
+            if closed.is_set():
+                return
+            closed.set()
             log.info("关闭设置窗口")
-            root.quit()
             root.destroy()
 
         root.protocol("WM_DELETE_WINDOW", close_window)
@@ -819,7 +828,7 @@ class TrayApp:
             bg="#f4f7f7",
             fg=muted,
         ).pack(anchor="w", pady=(5, 0))
-        status_var = tk.StringVar(value=self._status_label())
+        status_var = tk.StringVar(value="正在读取状态…")
         status = tk.Label(
             header,
             textvariable=status_var,
@@ -838,7 +847,7 @@ class TrayApp:
         summary_inner.columnconfigure(1, weight=1)
         summary_inner.columnconfigure(3, weight=1)
         summary_rows = (
-            ("刷新间隔", f"{self.settings.interval_seconds} 秒", "最近刷新", self._last_refresh_label()),
+            ("刷新间隔", f"{self.settings.interval_seconds} 秒", "最近刷新", "—"),
             ("蓝牙连接", "已停止", "设备", "DA-LCD-772D"),
         )
         status_widgets = []
@@ -1050,6 +1059,8 @@ class TrayApp:
         ] = []
 
         def fetch_quota_options() -> None:
+            if closed.is_set():
+                return
             if quota_fetching[0]:
                 return
             quota_fetching[0] = True
@@ -1074,6 +1085,8 @@ class TrayApp:
             root.after(100, poll_quota_fetch)
 
         def poll_quota_fetch() -> None:
+            if closed.is_set():
+                return
             if not quota_fetch_result:
                 root.after(100, poll_quota_fetch)
                 return
@@ -1118,12 +1131,13 @@ class TrayApp:
             threading.Thread(target=worker, daemon=True).start()
 
             def poll() -> None:
+                if closed.is_set():
+                    return
                 if not result:
                     root.after(50, poll)
                     return
-                if root.winfo_exists():
-                    feedback_var.set(result.pop())
-                    button.configure(state="normal")
+                feedback_var.set(result.pop())
+                button.configure(state="normal")
 
             root.after(50, poll)
 
@@ -1180,7 +1194,7 @@ class TrayApp:
             bg="#f4f7f7",
             fg="#7d8b8e",
         ).pack(side="left")
-        cancel = tk.Button(footer, text="取消", font=font, command=root.destroy, relief="solid", bd=1, padx=14, pady=5)
+        cancel = tk.Button(footer, text="取消", font=font, command=close_window, relief="solid", bd=1, padx=14, pady=5)
         cancel.pack(side="right")
 
         def save() -> None:
@@ -1194,6 +1208,8 @@ class TrayApp:
                     key for key, variable in quota_vars.items() if variable.get()
                 }
                 quota_groups = build_quota_groups(available_options[0], selected)
+                autostart = autostart_var.get()
+                start_on_launch = start_var.get()
             except ValueError as error:
                 feedback_var.set(f"保存失败：{error}")
                 save_button.configure(state="normal")
@@ -1205,8 +1221,8 @@ class TrayApp:
                 try:
                     error = self._save_settings(
                         interval,
-                        autostart_var.get(),
-                        start_var.get(),
+                        autostart,
+                        start_on_launch,
                         quota_groups,
                     )
                     result.append(error or "设置已保存")
@@ -1216,13 +1232,14 @@ class TrayApp:
             threading.Thread(target=worker, daemon=True).start()
 
             def poll() -> None:
+                if closed.is_set():
+                    return
                 if not result:
                     root.after(50, poll)
                     return
-                if root.winfo_exists():
-                    feedback_var.set(result.pop())
-                    status_var.set(self._status_label())
-                    save_button.configure(state="normal")
+                feedback_var.set(result.pop())
+                status_var.set("设置已保存，正在刷新状态…")
+                save_button.configure(state="normal")
 
             root.after(50, poll)
 
@@ -1248,21 +1265,42 @@ class TrayApp:
             fg="#27664f",
         ).pack(side="right", padx=(0, 12))
 
+        status_result: list[tuple[str, tuple[str, str], str]] = []
+        status_refreshing = [False]
+
+        def collect_status() -> None:
+            try:
+                status_result.append(
+                    (self._status_label(), self._ble_label(), self._last_refresh_label())
+                )
+            except Exception as error:
+                status_result.append(
+                    (
+                        f"状态读取失败：{type(error).__name__}",
+                        ("未知", "#6b777a"),
+                        "—",
+                    )
+                )
+
         def refresh_status() -> None:
-            if not root.winfo_exists():
+            if closed.is_set():
                 return
-            status_var.set(self._status_label())
-            status_widgets[0].configure(
-                text=self._ble_label()[0],
-                fg=self._ble_label()[1],
-            )
-            if refresh_widget is not None:
-                refresh_widget.configure(text=self._last_refresh_label())
+            if not status_refreshing[0]:
+                status_refreshing[0] = True
+                threading.Thread(target=collect_status, daemon=True).start()
+            if status_result:
+                status_text, ble_state, refresh_text = status_result.pop()
+                status_refreshing[0] = False
+                status_var.set(status_text)
+                status_widgets[0].configure(text=ble_state[0], fg=ble_state[1])
+                if refresh_widget is not None:
+                    refresh_widget.configure(text=refresh_text)
             root.after(1000, refresh_status)
 
         root.after(1000, refresh_status)
         root.after(100, fetch_quota_options)
-        root.mainloop()
+        if parent is None:
+            root.mainloop()
 
     def _update_menu(self) -> None:
         if self.icon is not None:
@@ -1297,10 +1335,13 @@ class TrayApp:
             if self.icon is not None:
                 self.icon.stop()
 
-    def _watch_settings_requests(self) -> None:
-        while not self.stop_event.wait(0.8):
-            if consume_settings_request():
-                threading.Thread(target=self._open_settings, daemon=True).start()
+    def _poll_settings_requests(self) -> None:
+        if self.stop_event.is_set():
+            self.ui_root.destroy()
+            return
+        if consume_settings_request():
+            self._show_settings(self.ui_root)
+        self.ui_root.after(200, self._poll_settings_requests)
 
     def run(self) -> None:
         import pystray
@@ -1330,12 +1371,20 @@ class TrayApp:
                 self._start_worker()
             except Exception as error:
                 self._handle_error("启动显示", error)
-        threading.Thread(target=self._watch_settings_requests, daemon=True).start()
+        import tkinter as tk
+
+        self.ui_root = tk.Tk()
+        self.ui_root.withdraw()
+        self.icon.run_detached()
         if self.open_settings_on_start:
-            threading.Thread(target=self._open_settings, daemon=True).start()
+            request_settings()
+        self.ui_root.after(100, self._poll_settings_requests)
         try:
-            self.icon.run()
+            self.ui_root.mainloop()
         finally:
+            self.stop_event.set()
+            if self.icon is not None:
+                self.icon.stop()
             if self.lease_watchdog is not None:
                 self.lease_watchdog.stop()
             if self.lease_server is not None:

@@ -155,6 +155,13 @@ class ControllerSettingsTests(unittest.TestCase):
                     self.assertEqual(app._open_preview(), "已请求打开最新预览")
                 startfile.assert_called_once_with(preview)
 
+    def test_open_settings_queues_a_one_shot_request(self) -> None:
+        app = object.__new__(control.TrayApp)
+        app.settings_lock = control.threading.Lock()
+        with patch.object(control, "request_settings") as request:
+            app._open_settings()
+        request.assert_called_once_with()
+
 
 class QuotaSelectionTests(unittest.TestCase):
     def test_magpie_payload_is_grouped_deduplicated_and_keeps_known_labels(self) -> None:
